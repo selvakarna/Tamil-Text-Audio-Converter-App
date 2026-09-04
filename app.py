@@ -1,17 +1,19 @@
 from flask import Flask, render_template, request, jsonify, send_file
-import easyocr
 import os
+from google.cloud import vision
 from googletrans import Translator
 from gtts import gTTS
 import tempfile
 import uuid
 from werkzeug.middleware.proxy_fix import ProxyFix
+import io
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app)
 
-# Initialize EasyOCR reader (supports English, Hindi, Tamil, Telugu, Kannada, Malayalam)
-reader = easyocr.Reader(['en', 'hi', 'ta', 'te', 'kn', 'ml'])
+# Initialize Google Cloud Vision client
+# NOTE: GOOGLE_APPLICATION_CREDENTIALS env var is auto-loaded by the client
+client = vision.ImageAnnotatorClient()
 
 # Initialize translator
 translator = Translator()
@@ -34,10 +36,15 @@ def process_image():
     temp_path = os.path.join(temp_dir, f"{uuid.uuid4()}.jpg")
     file.save(temp_path)
 
-    # OCR: Extract text
+    # OCR: Extract text using Google Cloud Vision
     try:
-        results = reader.readtext(temp_path, detail=0)
-        detected_text = ' '.join(results)
+        with io.open(temp_path, 'rb') as image_file:
+            content = image_file.read()
+
+        image = vision.Image(content=content)
+        response = client.text_detection(image=image)
+        texts = response.text_annotations
+        detected_text = texts[0].description if texts else ""
     except Exception as e:
         os.remove(temp_path)
         return jsonify({'error': f'OCR failed: {str(e)}'})
