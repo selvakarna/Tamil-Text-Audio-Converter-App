@@ -5,10 +5,12 @@ from googletrans import Translator
 from gtts import gTTS
 import tempfile
 import uuid
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app)
 
-# Initialize EasyOCR reader (supports Hindi, Tamil, Telugu, Kannada, Malayalam, English)
+# Initialize EasyOCR reader (supports English, Hindi, Tamil, Telugu, Kannada, Malayalam)
 reader = easyocr.Reader(['en', 'hi', 'ta', 'te', 'kn', 'ml'])
 
 # Initialize translator
@@ -28,14 +30,20 @@ def process_image():
         return jsonify({'error': 'No file selected'})
 
     # Save uploaded file
-    temp_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.jpg")
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, f"{uuid.uuid4()}.jpg")
     file.save(temp_path)
 
     # OCR: Extract text
-    results = reader.readtext(temp_path, detail=0)
-    detected_text = ' '.join(results)
+    try:
+        results = reader.readtext(temp_path, detail=0)
+        detected_text = ' '.join(results)
+    except Exception as e:
+        os.remove(temp_path)
+        return jsonify({'error': f'OCR failed: {str(e)}'})
 
     if not detected_text:
+        os.remove(temp_path)
         return jsonify({'error': 'No text detected in image'})
 
     # Translate to Tamil
@@ -43,17 +51,19 @@ def process_image():
         translation = translator.translate(detected_text, src='auto', dest='ta')
         tamil_text = translation.text
     except Exception as e:
+        os.remove(temp_path)
         return jsonify({'error': f'Translation failed: {str(e)}'})
 
     # Generate audio
     try:
         tts = gTTS(text=tamil_text, lang='ta', slow=False)
-        audio_path = os.path.join(tempfile.gettempdir(), f"{uuid.uuid4()}.mp3")
+        audio_path = os.path.join(temp_dir, f"{uuid.uuid4()}.mp3")
         tts.save(audio_path)
     except Exception as e:
+        os.remove(temp_path)
         return jsonify({'error': f'Audio generation failed: {str(e)}'})
 
-    # Clean up temp files
+    # Clean up temp image
     os.remove(temp_path)
 
     return jsonify({
